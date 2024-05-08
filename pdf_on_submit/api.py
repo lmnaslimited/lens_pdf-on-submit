@@ -5,12 +5,21 @@ from frappe.realtime import publish_realtime
 from frappe import _
 
 @frappe.whitelist()
-def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_print_format, im_letter_head, im_languages, im_target_doc_type, im_target_doc_name):
+def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_target_doc_type, im_target_doc_name, im_print_format=None, im_letter_head=None, im_languages=["en"]):
 
-    #make the incoming i_langs parameter to json
-    #because when called from client side each char in the array is considered as language
+    #if incoming languages is empty, but en as default  
+    if im_languages is not ["en"]:
+        if isinstance(im_languages, list):
+            la_language_list = im_languages
+        else:
+            la_language_list = json.loads(im_languages)
+    else:
+        la_language_list = im_languages            
 
-    la_language_list = json.loads(im_languages)
+        # #make the incoming i_langs parameter to json
+        # #because when called from client side each char in the array is considered as language
+
+        # la_language_list = json.loads(im_languages)
 
     #progress bar
     def fn_publish_progress(im_percent, im_description):
