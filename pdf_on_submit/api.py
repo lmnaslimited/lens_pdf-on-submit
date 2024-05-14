@@ -12,25 +12,11 @@ def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_targe
         if isinstance(im_languages, list):
             la_language_list = im_languages
         else:
+            #make the incoming i_langs parameter to json
+            #because when called from client side each char in the array is considered as language
             la_language_list = json.loads(im_languages)
     else:
         la_language_list = im_languages            
-
-        # #make the incoming i_langs parameter to json
-        # #because when called from client side each char in the array is considered as language
-
-        # la_language_list = json.loads(im_languages)
-
-    #progress bar
-    def fn_publish_progress(im_percent, im_description):
-        publish_realtime(
-			"progress",
-			{"percent": im_percent, "title": _("Creating PDF ..."), "description": im_description},
-			doctype=im_source_doc_type,
-			docname=im_source_doc_name,
-		)
-   
-    fn_publish_progress(0,None)
 
     #this will get the source doctype and create a folder in File/Home 
     #if the folder with the source doctype name is not there
@@ -54,9 +40,6 @@ def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_targe
                         })
     if la_existing_files:
         return None
-
-    l_total_langs = len(la_language_list) #find the length of the imported languages
-    l_completed_langs = 0
 
     ld_message = {} # Dictionary to store file objects
     
@@ -84,14 +67,9 @@ def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_targe
             lo_file.save()
             
             # Store the file object in the dictionary using the language as key
-            ld_message[l_language] = lo_file
-            l_completed_langs += 1
-            
-            l_progress_percent = (l_completed_langs / l_total_langs) * 100  #the calculation is for progress bar
-            fn_publish_progress(l_progress_percent, "Creating pdf in"+ " " + l_language)
+            ld_message[l_language] = lo_file       
 
         except Exception as e:
             frappe.message_log(f"Error saving PDF file for language {l_language}: {str(e)}")
 
-    fn_publish_progress(100, "PDF generation is completed")
     return ld_message
