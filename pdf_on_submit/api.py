@@ -5,7 +5,7 @@ from frappe.realtime import publish_realtime
 from frappe import _
 
 @frappe.whitelist()
-def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_target_doc_type, im_target_doc_name, im_print_format=None, im_letter_head=None, im_languages=["en"]):
+def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_target_doc_type, im_target_doc_name, im_print_format=None, im_letter_head=None, im_languages=["en"], im_file_name=None):
 
     #if incoming languages is empty, but en as default  
     if im_languages is not ["en"]:
@@ -57,8 +57,15 @@ def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_targe
             l_doctype_folder = fn_create_folder(im_target_doc_type, "Home")
             l_target_folder =  l_doctype_folder
 
+            #logic for filename
+            if im_file_name:
+                l_file_name = im_file_name.replace("{language}", l_language) + ".pdf"
+            else:
+                l_file_name = f"{im_source_doc_name}-{l_language}.pdf"
+
+           # Create and save the file
             lo_file = frappe.new_doc("File")
-            lo_file.file_name = f"{im_source_doc_name}-{l_language}.pdf"
+            lo_file.file_name = l_file_name
             lo_file.content = l_binary_content
             lo_file.folder = l_target_folder
             lo_file.is_private = 1
