@@ -45,6 +45,13 @@ def custom_get_users_next_action_data(transitions, doc):
 	
 	if not mute_email:
 		return get_users_next_action_data(transitions, doc)
+	else:
+		user_data_map['empty'] = frappe._dict(
+					{
+						"possible_actions": [],
+						"email": ''
+					}
+				)
 	
 	return user_data_map
 
