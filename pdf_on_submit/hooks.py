@@ -11,6 +11,18 @@ app_color = "#DB2B39"
 app_email = "raffael@alyf.de"
 app_license = "GPLv3"
 
+
+'''
+Monkey Patch Technique
+'''
+import frappe.workflow.doctype.workflow_action.workflow_action
+import pdf_on_submit.monkey_patch 
+'''
+Monkey patching the standard process workflow actions with custom
+process workflow actions to supress email notification for a particular
+workflow state.
+'''
+frappe.workflow.doctype.workflow_action.workflow_action.process_workflow_actions = pdf_on_submit.monkey_patch.cust_process_workflow_actions
 # Includes in <head>
 # ------------------
 
