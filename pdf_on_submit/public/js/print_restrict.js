@@ -41,7 +41,7 @@
  *   - Frappe-aligned: Extends core functionality cleanly using prototypal inheritance.
 
  * Maintenance Notes:
- Even though we preserve original behavior using `original_set_title.call(this)`,
+ Even though we preserve original behavior using `fnOriginalSetTitle.call(this)`,
  *   changes in Frappe's internal implementation of `PrintView` may still impact this override.
 
  *   Here's what could break and why:
@@ -59,7 +59,7 @@
 (function () {
 	// Check if PrintView and set_title exist before proceeding
 	if (frappe.ui.form.PrintView.prototype.set_title) {
-		const original_set_title = frappe.ui.form.PrintView.prototype.set_title;
+		const fnOriginalSetTitle = frappe.ui.form.PrintView.prototype.set_title;
 
 		frappe.ui.form.PrintView.prototype.set_title = function () {
 			try {
@@ -80,7 +80,7 @@
 				}
 
 				// Call the original method safely
-				original_set_title.call(this);
+				fnOriginalSetTitle.call(this);
 			} catch (err) {
 				console.log("Custom print button override failed:", err);
 			}
