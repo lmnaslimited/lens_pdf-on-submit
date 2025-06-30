@@ -4,7 +4,7 @@
  * ============================================================================
  * Purpose:
  *   One of our clients uses a workflow-enabled Quotation process where:
- *     - A Quotation in **Draft** state must NOT be printed or downloaded.
+ *     - A Quotation in **Request For Approval** state must NOT be printed or downloaded.
  *     - Printing/downloading should only be allowed once the document has moved
  *       beyond the Draft stage (e.g., after approval or submission).
  *
@@ -13,7 +13,7 @@
  * ⚙️ What This Script Does:
  *   - Overrides the `set_title()` method of Frappe's `PrintView` class.(path: frappe/printing/page/print/print.js)
  *   - When the document is a:
- *       → `Quotation` AND `docstatus === 0` (i.e., Draft):
+ *       → `Quotation` AND `workflow_state is not Approval and Self Approval`:
  *         → It hides:
  *             1. The "Print" primary action button.
  *             2. The "PDF" download button (identified via `#icon-small-file`).
@@ -63,8 +63,8 @@
 
 		frappe.ui.form.PrintView.prototype.set_title = function () {
 			try {
-				// Use `docstatus` instead of `status` for reliability
-				if (this.frm.doctype === "Quotation" && this.frm.doc.status === "Draft") {
+				// Use `workflow state` instead of `status` for reliability
+				if (this.frm.doctype === "Quotation" && (!["Approved", "Self Approved"].includes(this.frm.doc.workflow_state))) {
 					// Hide Print Button
 					$(".btn.btn-primary.btn-sm.primary-action").hide();
 
