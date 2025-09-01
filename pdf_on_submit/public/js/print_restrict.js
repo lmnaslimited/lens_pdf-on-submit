@@ -64,9 +64,13 @@
 		frappe.ui.form.PrintView.prototype.set_title = function () {
 			try {
 				// Use `workflow state` instead of `status` for reliability
-				if (this.frm.doctype === "Quotation" && (!["Approved", "Self Approved"].includes(this.frm.doc.workflow_state))) {
+				if (this.frm.doctype === "Quotation" && 
+					this.frm.doc.workflow_state && 
+					(!["Approved", "Self Approved"].includes(this.frm.doc.workflow_state))) {
 					// Hide Print Button
-					$(".btn.btn-primary.btn-sm.primary-action").hide();
+					// (bug-fix note): both form and Print was primary action button
+					// so we have added the data-label has well
+					$(`.btn.btn-primary.btn-sm.primary-action[data-label="${__('Print')}"]`).hide();
 
 					// Hide Full Page Button
 					$('button:has(use[href="#icon-full-page"])').hide();
@@ -74,7 +78,7 @@
 					// Hide PDF Button
 					$('button:has(use[href="#icon-small-file"])').hide();
 				} else {
-					$(".btn.btn-primary.btn-sm.primary-action").show();
+					$(`.btn.btn-primary.btn-sm.primary-action[data-label="${__('Print')}"]`).show();
 					$('button:has(use[href="#icon-full-page"])').show();
 					$('button:has(use[href="#icon-small-file"])').show();
 				}
