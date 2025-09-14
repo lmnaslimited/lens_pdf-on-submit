@@ -1,14 +1,15 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
+# Copyright (c) 2019, Raffael Meyer and contributors
+# For license information, please see license.txt
+
 from . import __version__ as app_version
 
 app_name = "pdf_on_submit"
 app_title = "PDF on Submit"
-app_publisher = "Raffael Meyer"
+app_publisher = "ALYF GmbH"
 app_description = "Generatation, Sales Order, Sales Invoice and Delivery Note"
 app_icon = "octicon octicon-file-pdf"
 app_color = "#DB2B39"
-app_email = "raffael@alyf.de"
+app_email = "hallo@alyf.de"
 app_license = "GPLv3"
 
 # Includes in <head>
@@ -115,3 +116,8 @@ doc_events = {
 # override_whitelisted_methods = {
 # 	"frappe.desk.doctype.event.event.get_events": "pdf_on_submit.event.get_events"
 # }
+
+jinja = {
+	"methods": ["pdf_on_submit.quill.split_quill"],
+	# "filters": "pdf_on_submit.utils.jinja_filters"
+}
