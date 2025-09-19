@@ -63,6 +63,18 @@
 
 		frappe.ui.form.PrintView.prototype.set_title = function () {
 			try {
+				// (bug-fix note) : for more robust checking we are reading the innertext as well
+				// in the element along with href
+				// @params - iaConfig (list) - conatining label and href link
+				// @params - iAction (str) - "hide" or "show"
+				function fnToggleButtons(iaConfig, iAction) {
+					$('button.btn.btn-default.btn-sm.ellipsis').filter(function () {
+						// used some() instead of find() because it return boolean
+						return iaConfig.some(idConfig => 
+							idConfig.label === $(this).text().trim() && 
+							idConfig.href === $(this).find('use').attr('href'));
+					})[iAction]();
+				}
 				// Use `workflow state` instead of `status` for reliability
 				if (this.frm.doctype === "Quotation" && 
 					this.frm.doc.workflow_state && 
@@ -72,21 +84,31 @@
 					// so we have added the data-label has well
 					$(`.btn.btn-primary.btn-sm.primary-action[data-label="${__('Print')}"]`).hide();
 
-					// Hide Full Page Button
-					$('button:has(use[href="#icon-full-page"])').hide();
+					
+					// the Full Page and PDF doesn't has a data-label similar to Print
+					// // Hide Full Page Button
+					// $('button:has(use[href="#icon-full-page"])').hide();
 
-					// Hide PDF Button
-					$('button:has(use[href="#icon-small-file"])').hide();
+					// // Hide PDF Button
+					// $('button:has(use[href="#icon-small-file"])').hide();
+					fnToggleButtons([
+						{ label: "Full Page", href: "#icon-full-page" },
+						{ label: "PDF", href: "#icon-small-file" }
+					], "hide");
+					
 				} else {
 					$(`.btn.btn-primary.btn-sm.primary-action[data-label="${__('Print')}"]`).show();
-					$('button:has(use[href="#icon-full-page"])').show();
-					$('button:has(use[href="#icon-small-file"])').show();
+					// $('button:has(use[href="#icon-full-page"])').show();
+					// $('button:has(use[href="#icon-small-file"])').show();
+					fnToggleButtons([
+						{ label: "Full Page", href: "#icon-full-page" },
+						{ label: "PDF", href: "#icon-small-file" }
+					], "show");
 				}
-
 				// Call the original method safely
 				fnOriginalSetTitle.call(this);
-			} catch (err) {
-				console.log("Custom print button override failed:", err);
+			} catch (error) {
+				console.log("Custom print button override failed:", error);
 			}
 		};
 	} else {
