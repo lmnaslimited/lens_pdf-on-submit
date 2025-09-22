@@ -1,12 +1,12 @@
 /**
  * ============================================================================
- * Custom Print Page Toolbar Override — Restrict Draft Quotation Downloads
+ * Custom Print Page Toolbar Override — Restrict Not Approved Quotation Downloads
  * ============================================================================
  * Purpose:
  *   One of our clients uses a workflow-enabled Quotation process where:
  *     - A Quotation in **Request For Approval** state must NOT be printed or downloaded.
  *     - Printing/downloading should only be allowed once the document has moved
- *       beyond the Draft stage (e.g., after approval or submission).
+ *       beyond the Draft or Pending stage (e.g., after approval or self approval).
  *
  *   This script enforces that restriction on the Print Page (`/app/print/...`).
  *
@@ -25,6 +25,9 @@
  *       → Limit scope and prevent global leakage.
  *       → Execute the override logic immediately.
  *   - Calls the original `set_title()` method after injecting the custom logic.
+ * 	 - Uses jQuery `.filter()` with `.text().trim()` to target buttons by their
+ *     visible text (innertext) — this means we are matching **what the user sees on screen**,
+ *     not `data-label` attributes or icon references.
  *   - Injected using the `page_js` hook for the Print Page.
  *
  * File:
@@ -63,26 +66,48 @@
 
 		frappe.ui.form.PrintView.prototype.set_title = function () {
 			try {
-				// Use `workflow state` instead of `status` for reliability
-				if (this.frm.doctype === "Quotation" && (!["Approved", "Self Approved"].includes(this.frm.doc.workflow_state))) {
-					// Hide Print Button
-					$(".btn.btn-primary.btn-sm.primary-action").hide();
+				// (bug-fix note) : both form's Save and Print was primary action button, 
+				// so for more robust checking we are reading the innertext as well
+				// in the element
+				// @params - iAction (str) - "hide" or "show"
+				function fnToggleButtons( iAction) {
+					 // Primary "Print" button
+					 $('button.btn.btn-primary.btn-sm.primary-action')
+					 .filter(function () {
+						 return $(this).text().trim() === __('Print');
+					 })[iAction]();
 
-					// Hide Full Page Button
-					$('button:has(use[href="#icon-full-page"])').hide();
-
-					// Hide PDF Button
-					$('button:has(use[href="#icon-small-file"])').hide();
-				} else {
-					$(".btn.btn-primary.btn-sm.primary-action").show();
-					$('button:has(use[href="#icon-full-page"])').show();
-					$('button:has(use[href="#icon-small-file"])').show();
+				 // Secondary buttons: Full Page & PDF (with translation support)
+				 $('button.btn.btn-default.btn-sm.ellipsis').filter(function () {
+					 return [__('Full Page'), __('PDF')].includes($(this).text().trim());
+				 })[iAction]();
 				}
 
+				// Use `workflow state` instead of `status` for reliability
+				if (this.frm.doctype === "Quotation" && 
+					this.frm.doc.workflow_state && 
+					(!["Approved", "Self Approved"].includes(this.frm.doc.workflow_state))) {
+
+					// Hide Print Button
+					// $(".btn.btn-primary.btn-sm.primary-action").hide();
+
+					// // Hide Full Page Button
+					// $('button:has(use[href="#icon-full-page"])').hide();
+
+					// // Hide PDF Button
+					// $('button:has(use[href="#icon-small-file"])').hide();
+					fnToggleButtons("hide");
+					
+				} else {
+					// $(".btn.btn-primary.btn-sm.primary-action").show();
+					// $('button:has(use[href="#icon-full-page"])').show();
+					// $('button:has(use[href="#icon-small-file"])').show();
+					fnToggleButtons("show");
+				}
 				// Call the original method safely
 				fnOriginalSetTitle.call(this);
-			} catch (err) {
-				console.log("Custom print button override failed:", err);
+			} catch (error) {
+				console.log("Custom print button override failed:", error);
 			}
 		};
 	} else {
