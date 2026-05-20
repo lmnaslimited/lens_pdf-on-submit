@@ -164,6 +164,15 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 
 	except frappe.DoesNotExistError:
 		pass
+
+	order_priority = ""
+	if preferred_template:
+		order_priority = """
+			case
+				when ifnull(tabItem.variant_of, '') = %(preferred_template)s then 0
+				else 1
+			end,
+		"""
 	return frappe.db.sql(
 		"""select
 			tabItem.name {columns}
@@ -176,10 +185,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 				{description_cond})
 			{fcond} {mcond}
 		order by
-			case
-				when ifnull(tabItem.variant_of, '') = %(preferred_template)s then 0
-				else 1
-			end,
+			{order_priority}
 			if(locate(%(_txt)s, name), locate(%(_txt)s, name), 99999),
 			if(locate(%(_txt)s, item_name), locate(%(_txt)s, item_name), 99999),
 			idx desc,
@@ -190,6 +196,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 			fcond=get_filters_cond(doctype, filters, conditions).replace("%", "%%"),
 			mcond=get_match_cond(doctype).replace("%", "%%"),
 			description_cond=description_cond,
+			order_priority=order_priority,
 		),
 		{
 			"today": nowdate(),
@@ -197,7 +204,6 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 			"_txt": txt.replace("%", ""),
 			"start": start,
 			"page_len": page_len,
-			"preferred_template": preferred_template,
 		},
 		as_dict=as_dict,
 	)
