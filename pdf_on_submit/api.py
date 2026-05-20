@@ -87,10 +87,13 @@ def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_targe
 
 '''
 Custom Item search query used to prioritize Item search results
-based on the preferred "Item Search Priority" configured in
+based on the Item Search Sort Order configuration maintained in
 Quotation Presets.
-This helps users see preferred Item first
-during Item selection in transactions.
+
+The priority configuration is managed through a child table,
+where the child row sequence (idx) determines Item search Sort.
+This allows users to control preferred Item template
+ordering directly from the UI without modifying code.
 
 Implemenation:
 refer: https://github.com/frappe/erpnext/blob/v15.91.1/erpnext/controllers/queries.py#L175-L270
@@ -188,34 +191,56 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 		# scan description only if items are less than 50000
 		l_description_cond = "or tabItem.description LIKE %(txt)s"
 
-	# Fetch preferred Item template from Quotation Presets
-	# to prioritize preferred Item variants in search results
-	l_preferred_item_template = ""
+	# Fetch Item search Sort Order configuration from Quotation Presets
+	# to prioritize preferred Item template variants in search results
+	la_item_search_priority = []
 
 	try:
-		# Check whether Quotation Presets doctype and field exist
+		# Check whether Quotation Presets doctype and child table field exist
 		ld_quo_presets_meta = frappe.get_meta("Quotation Presets")
 
+		# Validate whether Item search Sort Order child table field exists
 		if ld_quo_presets_meta.has_field("item_search_priority"):
-			l_preferred_item_template = (
-				frappe.db.get_single_value(
-					"Quotation Presets",
-					"item_search_priority",
+
+			# Fetch child table metadata to ensure referenced doctype exists
+			l_child_doctype = ld_quo_presets_meta.get_field("item_search_sort_order").options
+
+			if frappe.db.exists("DocType", l_child_doctype):
+
+				# Fetch Item template priority order based on child table row sequence (idx)
+				la_item_search_priority = frappe.get_all(
+					l_child_doctype,
+					filters={"parent": "Quotation Presets"},
+					fields=["item_template", "idx"],
+					order_by="idx asc",
 				)
-				or ""
-			)
+
 	# Ignore error if Quotation Presets doctype does not exist
 	except frappe.DoesNotExistError:
 		pass
 
 	l_order_priority = ""
-	# Apply custom ordering only when a preferred Item template is configured
-	# to avoid unnecessary ordering conditions in the query
-	if l_preferred_item_template:
-		l_order_priority = """
+
+	# Apply Item template prioritization only during actual user search
+	# to avoid reordering default Item dropdown results
+	if la_item_search_priority and txt.strip("%"):
+
+		la_case_conditions = []
+
+		# Build dynamic CASE conditions using configured Item priority sequence
+		for ld_row in la_item_search_priority:
+
+			la_case_conditions.append(
+				f"""
+					when ifnull(tabItem.variant_of, '') = '{ld_row.item_template}'
+					then {ld_row.idx}
+				"""
+			)
+
+		l_order_priority = f"""
 			case
-				when ifnull(tabItem.variant_of, '') = %(l_preferred_item_template)s then 0
-				else 1
+				{' '.join(la_case_conditions)}
+				else 999
 			end,
 		"""
 	return frappe.db.sql(
@@ -249,7 +274,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 			"_txt": txt.replace("%", ""),
 			"start": start,
 			"page_len": page_len,
-			"l_preferred_item_template": l_preferred_item_template,
+			"la_item_search_priority": la_item_search_priority,
 		},
 		as_dict=as_dict,
 	)
