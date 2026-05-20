@@ -85,118 +85,163 @@ def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_targe
     return ld_message
 
 
+'''
+Custom Item search query used to prioritize Item search results
+based on the preferred "Item Search Priority" configured in
+Quotation Presets.
+This helps users see preferred Item first
+during Item selection in transactions.
+
+Implemenation:
+refer: https://github.com/frappe/erpnext/blob/v15.91.1/erpnext/controllers/queries.py#L175-L270
+
+The standard ERPNext item_query implementation is reused with an
+additional CASE condition in ORDER BY to prioritize matching
+preferred Item templates first in search results.
+
+If no preferred template is configured, the query follows the
+default ERPNext Item ordering behavior.
+'''
 @frappe.whitelist()
 @frappe.validate_and_sanitize_search_inputs
 def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_dict=False):
-	doctype = "Item"
-	conditions = []
+	# Force query execution on Item doctype regardless of incoming doctype
+	l_doctype = "Item"
+	la_conditions = [] # Store additional query conditions dynamically if needed
 
+	# Convert filters from JSON string to dictionary format for processing
 	if isinstance(filters, str):
 		filters = json.loads(filters)
 
 	# Get searchfields from meta and use in Item Link field query
-	meta = frappe.get_meta(doctype, cached=True)
-	searchfields = meta.get_search_fields()
+	ld_doctype_meta = frappe.get_meta(l_doctype, cached=True)
+	la_searchfields = ld_doctype_meta.get_search_fields()
 
-	columns = ""
-	extra_searchfields = [field for field in searchfields if field not in ["name", "description"]]
+	l_columns = ""
+	# Exclude default fields from extra selectable columns
+	la_extra_searchfields = [l_field for l_field in la_searchfields if l_field not in ["name", "description"]]
 
-	if extra_searchfields:
-		columns += ", " + ", ".join(extra_searchfields)
+	# Include additional search fields in query result columns
+	# to improve Link field visibility and user selection experience
+	if la_extra_searchfields:
+		l_columns += ", " + ", ".join(la_extra_searchfields)
 
-	if "description" in searchfields:
-		columns += """, if(length(tabItem.description) > 40, \
+	# Truncate long Item descriptions in dropdown results
+	# to keep Link field search results clean and readable
+	if "description" in la_searchfields:
+		l_columns += """, if(length(tabItem.description) > 40, \
 			concat(substr(tabItem.description, 1, 40), "..."), description) as description"""
 
-	searchfields = searchfields + [
-		field
-		for field in [searchfield or "name", "item_code", "item_group", "item_name"]
-		if field not in searchfields
+	# Build dynamic search conditions using configured Item search fields
+	# so Item lookup remains flexible and metadata-driven
+	la_searchfields = la_searchfields + [
+		l_field
+		for l_field in [searchfield or "name", "item_code", "item_group", "item_name"]
+		if l_field not in la_searchfields
 	]
-	searchfields = " or ".join([field + " like %(txt)s" for field in searchfields])
+	# Generate SQL LIKE conditions for all searchable fields
+	la_searchfields = " or ".join([l_field + " like %(txt)s" for l_field in la_searchfields])
 
 	if filters and isinstance(filters, dict):
+		# Apply Party Specific Item restrictions
+		# so users can search only Items mapped to the selected customer/supplier
 		if filters.get("customer") or filters.get("supplier"):
-			party = filters.get("customer") or filters.get("supplier")
-			item_rules_list = frappe.get_all(
+			l_party = filters.get("customer") or filters.get("supplier")
+			# Fetch Party Specific Item rules configured for the selected party
+			la_item_rules_list = frappe.get_all(
 				"Party Specific Item",
-				filters={"party": party},
+				filters={"party": l_party},
 				fields=["restrict_based_on", "based_on_value"],
 			)
 
-			filters_dict = {}
-			for rule in item_rules_list:
-				if rule["restrict_based_on"] == "Item":
-					rule["restrict_based_on"] = "name"
-				filters_dict[rule.restrict_based_on] = []
+			ld_filters_dict = {}
+			for ld_rule in la_item_rules_list:
+				# Convert Item restriction into Item name filtering
+				# because Item master records are stored using the Item document name
+				if ld_rule["restrict_based_on"] == "Item":
+					ld_rule["restrict_based_on"] = "name"
+				ld_filters_dict[ld_rule.restrict_based_on] = []
 
-			for rule in item_rules_list:
-				filters_dict[rule.restrict_based_on].append(rule.based_on_value)
+			# Group all allowed values under their corresponding restriction field
+			for ld_rule in la_item_rules_list:
+				ld_filters_dict[ld_rule.restrict_based_on].append(ld_rule.based_on_value)
 
-			for filter in filters_dict:
-				filters[scrub(filter)] = ["in", filters_dict[filter]]
+			# Inject dynamically prepared filters into query filters
+			for l_filter in ld_filters_dict:
+				filters[scrub(l_filter)] = ["in", ld_filters_dict[l_filter]]
 
+			# Remove customer/supplier filters after converting them into Item restrictions
+			# to avoid invalid conditions in Item query execution
 			if filters.get("customer"):
 				del filters["customer"]
 			else:
 				del filters["supplier"]
 		else:
+			# Remove unused customer/supplier filters to avoid unwanted query conditions
 			filters.pop("customer", None)
 			filters.pop("supplier", None)
 
-	description_cond = ""
-	if frappe.db.count(doctype, cache=True) < 50000:
+	l_description_cond = ""
+	# Enable description search only for smaller Item datasets
+	# to avoid expensive full table scans and maintain search performance
+	if frappe.db.count(l_doctype, cache=True) < 50000:
 		# scan description only if items are less than 50000
-		description_cond = "or tabItem.description LIKE %(txt)s"
-	preferred_template = ""
+		l_description_cond = "or tabItem.description LIKE %(txt)s"
+
+	# Fetch preferred Item template from Quotation Presets
+	# to prioritize preferred Item variants in search results
+	l_preferred_item_template = ""
 
 	try:
-		meta = frappe.get_meta("Quotation Presets")
+		# Check whether Quotation Presets doctype and field exist
+		ld_quo_presets_meta = frappe.get_meta("Quotation Presets")
 
-		if meta.has_field("item_search_priority"):
-			preferred_template = (
+		if ld_quo_presets_meta.has_field("item_search_priority"):
+			l_preferred_item_template = (
 				frappe.db.get_single_value(
 					"Quotation Presets",
 					"item_search_priority",
 				)
 				or ""
 			)
-
+	# Ignore error if Quotation Presets doctype does not exist
 	except frappe.DoesNotExistError:
 		pass
 
-	order_priority = ""
-	if preferred_template:
-		order_priority = """
+	l_order_priority = ""
+	# Apply custom ordering only when a preferred Item template is configured
+	# to avoid unnecessary ordering conditions in the query
+	if l_preferred_item_template:
+		l_order_priority = """
 			case
-				when ifnull(tabItem.variant_of, '') = %(preferred_template)s then 0
+				when ifnull(tabItem.variant_of, '') = %(l_preferred_item_template)s then 0
 				else 1
 			end,
 		"""
 	return frappe.db.sql(
 		"""select
-			tabItem.name {columns}
+			tabItem.name {l_columns}
 		from tabItem
 		where tabItem.docstatus < 2
 			and tabItem.disabled=0
 			and tabItem.has_variants=0
 			and (tabItem.end_of_life > %(today)s or ifnull(tabItem.end_of_life, '0000-00-00')='0000-00-00')
 			and ({scond} or tabItem.item_code IN (select parent from `tabItem Barcode` where barcode LIKE %(txt)s)
-				{description_cond})
+				{l_description_cond})
 			{fcond} {mcond}
 		order by
-			{order_priority}
+			{l_order_priority}
 			if(locate(%(_txt)s, name), locate(%(_txt)s, name), 99999),
 			if(locate(%(_txt)s, item_name), locate(%(_txt)s, item_name), 99999),
 			idx desc,
 			name, item_name
 		limit %(start)s, %(page_len)s """.format(
-			columns=columns,
-			scond=searchfields,
-			fcond=get_filters_cond(doctype, filters, conditions).replace("%", "%%"),
-			mcond=get_match_cond(doctype).replace("%", "%%"),
-			description_cond=description_cond,
-			order_priority=order_priority,
+			l_columns=l_columns,
+			scond=la_searchfields,
+			fcond=get_filters_cond(l_doctype, filters, la_conditions).replace("%", "%%"),
+			mcond=get_match_cond(l_doctype).replace("%", "%%"),
+			l_description_cond=l_description_cond,
+			l_order_priority=l_order_priority,
 		),
 		{
 			"today": nowdate(),
@@ -204,6 +249,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 			"_txt": txt.replace("%", ""),
 			"start": start,
 			"page_len": page_len,
+			"l_preferred_item_template": l_preferred_item_template,
 		},
 		as_dict=as_dict,
 	)
