@@ -200,7 +200,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 		ld_quo_presets_meta = frappe.get_meta("Quotation Presets")
 
 		# Validate whether Item search Sort Order child table field exists
-		if ld_quo_presets_meta.has_field("item_search_priority"):
+		if ld_quo_presets_meta.has_field("item_search_sort_order"):
 
 			# Fetch child table metadata to ensure referenced doctype exists
 			l_child_doctype = ld_quo_presets_meta.get_field("item_search_sort_order").options
@@ -220,6 +220,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 		pass
 
 	l_order_priority = ""
+	la_processed_templates = set()
 
 	# Apply Item template prioritization only during actual user search
 	# to avoid reordering default Item dropdown results
@@ -229,20 +230,31 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 
 		# Build dynamic CASE conditions using configured Item priority sequence
 		for ld_row in la_item_search_priority:
+			# Avoid empty rows
+			if not ld_row.item_template:
+				continue
 
+			# Skip duplicate item templates
+			if ld_row.item_template in la_processed_templates:
+				continue
+
+			la_processed_templates.add(ld_row.item_template)
+			# Escape Item template values before injecting into SQL CASE condition
+			# to safely handle special characters and avoid SQL syntax errors
+			# ex: ABC's Cable --> 'ABC\'s Cable'
 			la_case_conditions.append(
 				f"""
-					when ifnull(tabItem.variant_of, '') = '{ld_row.item_template}'
+					when ifnull(tabItem.variant_of, '') = {frappe.db.escape(ld_row.item_template)}
 					then {ld_row.idx}
 				"""
 			)
-
-		l_order_priority = f"""
-			case
-				{' '.join(la_case_conditions)}
-				else 999
-			end,
-		"""
+		if la_case_conditions:
+			l_order_priority = f"""
+				case
+					{' '.join(la_case_conditions)}
+					else 999
+				end,
+			"""
 	return frappe.db.sql(
 		"""select
 			tabItem.name {l_columns}
@@ -274,7 +286,6 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 			"_txt": txt.replace("%", ""),
 			"start": start,
 			"page_len": page_len,
-			"la_item_search_priority": la_item_search_priority,
 		},
 		as_dict=as_dict,
 	)
