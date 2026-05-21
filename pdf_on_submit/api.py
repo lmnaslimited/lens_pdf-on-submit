@@ -86,6 +86,78 @@ def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_targe
 
     return ld_message
 
+def fn_get_item_search_configuration():
+	"""Fetch configured Item template priority sequence from Quotation Presets."""
+
+	try:
+		# Check whether Quotation Presets doctype and child table field exist
+		ld_quo_presets_meta = frappe.get_meta("Quotation Presets")
+
+		# Validate whether Item search Sort Order child table field exists
+		if not ld_quo_presets_meta.has_field("item_search_sort_order"):
+			return []
+
+		# Fetch child table metadata to ensure referenced doctype exists
+		l_child_doctype = ld_quo_presets_meta.get_field(
+			"item_search_sort_order"
+		).options
+
+		if not frappe.db.exists("DocType", l_child_doctype):
+			return []
+		
+		# Fetch Item template priority order based on child table row sequence (idx)
+		return frappe.get_all(
+			l_child_doctype,
+			filters={"parent": "Quotation Presets"},
+			fields=["item_template", "idx"],
+			order_by="idx asc",
+		)
+
+	# Ignore error if Quotation Presets doctype does not exist
+	except frappe.DoesNotExistError:
+		return []
+	
+def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
+	"""Generate SQL CASE condition for Item priority ordering."""
+
+	# Apply Item template prioritization only during actual user search
+	# to avoid reordering default Item dropdown results
+	if not (ia_item_search_priority and i_txt.strip("%")):
+		return ""
+
+	la_case_conditions = []
+	la_processed_templates = set()
+
+	# Build dynamic CASE conditions using configured Item priority sequence
+	for ld_row in ia_item_search_priority:
+		# Avoid empty rows
+		if not ld_row.item_template:
+			continue
+		# Skip duplicate item templates
+		if ld_row.item_template in la_processed_templates:
+			continue
+
+		la_processed_templates.add(ld_row.item_template)
+
+		# Escape Item template values before injecting into SQL CASE condition
+		# to safely handle special characters and avoid SQL syntax errors
+		# ex: ABC's Cable --> 'ABC\'s Cable'
+		la_case_conditions.append(
+			f"""
+				when ifnull(tabItem.variant_of, '') = {frappe.db.escape(ld_row.item_template)}
+				then {ld_row.idx}
+			"""
+		)
+
+	if not la_case_conditions:
+		return ""
+
+	return f"""
+		case
+			{' '.join(la_case_conditions)}
+			else 999
+		end,
+	"""
 
 '''
 Custom Item search query used to prioritize Item search results
@@ -195,68 +267,12 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 
 	# Fetch Item search Sort Order configuration from Quotation Presets
 	# to prioritize preferred Item template variants in search results
-	la_item_search_priority = []
+	la_item_search_priority = fn_get_item_search_configuration()
 
-	try:
-		# Check whether Quotation Presets doctype and child table field exist
-		ld_quo_presets_meta = frappe.get_meta("Quotation Presets")
-
-		# Validate whether Item search Sort Order child table field exists
-		if ld_quo_presets_meta.has_field("item_search_sort_order"):
-
-			# Fetch child table metadata to ensure referenced doctype exists
-			l_child_doctype = ld_quo_presets_meta.get_field("item_search_sort_order").options
-
-			if frappe.db.exists("DocType", l_child_doctype):
-
-				# Fetch Item template priority order based on child table row sequence (idx)
-				la_item_search_priority = frappe.get_all(
-					l_child_doctype,
-					filters={"parent": "Quotation Presets"},
-					fields=["item_template", "idx"],
-					order_by="idx asc",
-				)
-
-	# Ignore error if Quotation Presets doctype does not exist
-	except frappe.DoesNotExistError:
-		pass
-
-	l_order_priority = ""
-	la_processed_templates = set()
-
-	# Apply Item template prioritization only during actual user search
-	# to avoid reordering default Item dropdown results
-	if la_item_search_priority and txt.strip("%"):
-
-		la_case_conditions = []
-
-		# Build dynamic CASE conditions using configured Item priority sequence
-		for ld_row in la_item_search_priority:
-			# Avoid empty rows
-			if not ld_row.item_template:
-				continue
-
-			# Skip duplicate item templates
-			if ld_row.item_template in la_processed_templates:
-				continue
-
-			la_processed_templates.add(ld_row.item_template)
-			# Escape Item template values before injecting into SQL CASE condition
-			# to safely handle special characters and avoid SQL syntax errors
-			# ex: ABC's Cable --> 'ABC\'s Cable'
-			la_case_conditions.append(
-				f"""
-					when ifnull(tabItem.variant_of, '') = {frappe.db.escape(ld_row.item_template)}
-					then {ld_row.idx}
-				"""
-			)
-		if la_case_conditions:
-			l_order_priority = f"""
-				case
-					{' '.join(la_case_conditions)}
-					else 999
-				end,
-			"""
+	l_order_priority = fn_get_priority_order_clause(
+		la_item_search_priority,
+		txt
+	)
 	return frappe.db.sql(
 		"""select
 			tabItem.name {l_columns}
