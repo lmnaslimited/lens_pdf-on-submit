@@ -1,52 +1,52 @@
-"""
-PDF on Submit. Creates a PDF when a document is submitted.
-Copyright (C) 2019  Raffael Meyer <raffael@alyf.de>
+# Copyright (c) 2019, Raffael Meyer and contributors
+# For license information, please see license.txt
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""
+import json
 
 import frappe
 from frappe import _
 from frappe.core.api.file import create_new_folder
 from frappe.model.naming import _format_autoname
 from frappe.realtime import publish_realtime
+from frappe.translate import print_language
+from frappe.utils.data import evaluate_filters
 from frappe.utils.weasyprint import PrintFormatGenerator
 
 
 def attach_pdf(doc, event=None):
 	settings = frappe.get_single("PDF on Submit Settings")
+	enabled_doctypes = settings.get("enabled_for", {"document_type": doc.doctype})
 
-	if enabled_doctypes := settings.get("enabled_for", {"document_type": doc.doctype}):
-		enabled_doctype = enabled_doctypes[0]
-	else:
+	if not enabled_doctypes:
 		return
 
-	auto_name = enabled_doctype.auto_name
-	print_format = (
-		enabled_doctype.print_format or doc.meta.default_print_format or "Standard"
-	)
-	letter_head = enabled_doctype.letter_head or None
+	for dt_settings in enabled_doctypes:
+		process_enabled_doctype(doc, dt_settings, settings.create_pdf_in_background)
 
+
+def process_enabled_doctype(doc, settings, in_background):
+	if settings.filters:
+		filters = json.loads(settings.filters)
+		if filters:
+			condition_met = evaluate_filters(doc, filters)
+			if not condition_met:
+				return
+
+	auto_name = settings.auto_name
+	print_format = (
+		settings.print_format or doc.meta.default_print_format or "Standard"
+	)
+	letter_head = settings.letter_head or None
 	fallback_language = (
 		frappe.db.get_single_value("System Settings", "language") or "en"
 	)
 	args = {
 		"doctype": doc.doctype,
 		"name": doc.name,
+		"to_field": settings.attach_to_field,
 		"title": doc.get_title() if doc.meta.title_field else None,
 		"lang": getattr(doc, "language", fallback_language),
-		"show_progress": not settings.create_pdf_in_background,
+		"show_progress": not in_background,
 		"auto_name": auto_name,
 		"print_format": print_format,
 		"letter_head": letter_head,
@@ -56,10 +56,11 @@ def attach_pdf(doc, event=None):
 		method=execute,
 		timeout=30,
 		now=bool(
-			not settings.create_pdf_in_background
+			not in_background
 			or frappe.flags.in_test
 			or frappe.conf.developer_mode
 		),
+		enqueue_after_commit=True,
 		**args,
 	)
 
@@ -67,6 +68,7 @@ def attach_pdf(doc, event=None):
 def execute(
 	doctype,
 	name,
+	to_field=None,
 	title=None,
 	lang=None,
 	show_progress=True,
@@ -90,12 +92,6 @@ def execute(
 			docname=name,
 		)
 
-	if lang:
-		frappe.local.lang = lang
-		# unset lang and jenv to load new language
-		frappe.local.lang_full_dict = None
-		frappe.local.jenv = None
-
 	if show_progress:
 		publish_progress(0)
 
@@ -106,16 +102,27 @@ def execute(
 	if show_progress:
 		publish_progress(33)
 
-	if frappe.db.get_value("Print Format", print_format, "print_format_builder_beta"):
-		doc = frappe.get_doc(doctype, name)
-		pdf_data = PrintFormatGenerator(print_format, doc, letter_head).render_pdf()
-	else:
-		pdf_data = get_pdf_data(doctype, name, print_format, letter_head)
+	with print_language(lang):
+		if frappe.db.get_value("Print Format", print_format, "print_format_builder_beta"):
+			doc = frappe.get_doc(doctype, name)
+			pdf_data = PrintFormatGenerator(print_format, doc, letter_head).render_pdf()
+		else:
+			pdf_data = get_pdf_data(doctype, name, print_format, letter_head)
+
+	if doctype == "Sales Invoice" and "eu_einvoice" in frappe.get_installed_apps():
+		try:
+			from eu_einvoice.european_e_invoice.custom.sales_invoice import attach_xml_to_pdf
+			pdf_data = attach_xml_to_pdf(name, pdf_data)
+		except Exception:
+			msg = _("Failed to attach XML to PDF for Sales Invoice {0}").format(name)
+			if show_progress:
+				frappe.msgprint(msg, indicator="red", alert=True)
+			frappe.log_error(title=msg, reference_doctype=doctype, reference_name=name)
 
 	if show_progress:
 		publish_progress(66)
 
-	save_and_attach(pdf_data, doctype, name, target_folder, auto_name)
+	save_and_attach(pdf_data, doctype, name, target_folder, auto_name, to_field)
 
 	if show_progress:
 		publish_progress(100)
@@ -123,10 +130,11 @@ def execute(
 
 def create_folder(folder, parent):
 	"""Make sure the folder exists and return it's name."""
-	new_folder_name = "/".join([parent, folder])
+	_folder = folder.replace("/", "-")
+	new_folder_name = "/".join([parent, _folder])
 
 	if not frappe.db.exists("File", new_folder_name):
-		create_new_folder(folder, parent)
+		create_new_folder(_folder, parent)
 
 	return new_folder_name
 
@@ -137,7 +145,7 @@ def get_pdf_data(doctype, name, print_format: None, letterhead: None):
 	return frappe.utils.pdf.get_pdf(html)
 
 
-def save_and_attach(content, to_doctype, to_name, folder, auto_name=None):
+def save_and_attach(content, to_doctype, to_name, folder, auto_name=None, to_field=None):
 	"""
 	Save content to disk and create a File document.
 
@@ -158,7 +166,11 @@ def save_and_attach(content, to_doctype, to_name, folder, auto_name=None):
 	file.is_private = 1
 	file.attached_to_doctype = to_doctype
 	file.attached_to_name = to_name
+	file.attached_to_field = to_field
 	file.save()
+
+	if to_field:
+		frappe.db.set_value(to_doctype, to_name, to_field, file.file_url)
 
 
 def set_name_from_naming_options(autoname, doc):
