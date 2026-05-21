@@ -4,6 +4,11 @@ import json
 from frappe.realtime import publish_realtime
 from frappe import _
 
+from frappe import scrub
+from frappe.desk.reportview import get_filters_cond, get_match_cond
+from frappe.utils import nowdate
+
+
 @frappe.whitelist()
 def fn_doc_pdf_source_to_target(im_source_doc_type, im_source_doc_name, im_target_doc_type, im_target_doc_name, im_print_format=None, im_letter_head=None, im_languages=["en"], im_file_name=None):
 
