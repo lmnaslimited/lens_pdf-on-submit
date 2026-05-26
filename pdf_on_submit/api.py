@@ -285,9 +285,9 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 				{l_description_cond})
 			{fcond} {mcond}
 		order by
-			{l_order_priority}
 			if(locate(%(_txt)s, name), locate(%(_txt)s, name), 99999),
 			if(locate(%(_txt)s, item_name), locate(%(_txt)s, item_name), 99999),
+			{l_order_priority}
 			idx desc,
 			name, item_name
 		limit %(start)s, %(page_len)s """.format(
