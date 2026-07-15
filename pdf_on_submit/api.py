@@ -117,7 +117,7 @@ def fn_get_item_search_configuration():
 	except frappe.DoesNotExistError:
 		return []
 	
-def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
+def fn_get_priority_order_clause(ia_item_search_priority, i_txt, i_description_only_condition=""):
 	"""Generate SQL CASE condition for Item priority ordering."""
 
 	# Apply Item template prioritization only during actual user search
@@ -152,11 +152,28 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	if not la_case_conditions:
 		return ""
 
+	# return f"""
+	# 	case
+	# 		{' '.join(la_case_conditions)}
+	# 		else 999
+	# 	end,
+	# """
+	l_priority_case = f"""
+	case
+		{' '.join(la_case_conditions)}
+		else 999
+	end
+	"""
+
+	if not i_description_only_condition:
+		return l_priority_case + ","
+
 	return f"""
-		case
-			{' '.join(la_case_conditions)}
-			else 999
-		end,
+	case
+		when {i_description_only_condition}
+		then 999
+		else {l_priority_case}
+	end,
 	"""
 
 '''
@@ -216,6 +233,9 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 		for l_field in [searchfield or "name", "item_code", "item_group", "item_name"]
 		if l_field not in la_searchfields
 	]
+
+	la_searchfields_list = la_searchfields.copy()
+
 	# Generate SQL LIKE conditions for all searchable fields
 	la_searchfields = " or ".join([l_field + " like %(txt)s" for l_field in la_searchfields])
 
@@ -269,9 +289,27 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 	# to prioritize preferred Item template variants in search results
 	la_item_search_priority = fn_get_item_search_configuration()
 
+	# Build condition to identify Items matching only through description
+	l_description_only_condition = ""
+
+	if "description" in la_searchfields_list:
+		la_non_description_conditions = [
+			f"{l_field} LIKE %(txt)s"
+			for l_field in la_searchfields_list
+			if l_field != "description"
+		]
+
+		l_description_only_condition = f"""
+			tabItem.description LIKE %(txt)s
+			AND NOT (
+				{' OR '.join(la_non_description_conditions)}
+			)
+		"""
+
 	l_order_priority = fn_get_priority_order_clause(
 		la_item_search_priority,
-		txt
+		txt,
+		l_description_only_condition
 	)
 	return frappe.db.sql(
 		"""select
