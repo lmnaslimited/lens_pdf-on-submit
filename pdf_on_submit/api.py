@@ -291,7 +291,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 	la_item_search_priority = fn_get_item_search_configuration()
 
 	# Give lower priority to Items matched only through their Description.
-	l_order_match_priority = fn_get_search_match_order_clause(txt)
+	l_order_match_priority = fn_get_search_match_order_clause(txt) #ISS-2026-00074
 
 	l_order_priority = fn_get_priority_order_clause(
 		la_item_search_priority,
