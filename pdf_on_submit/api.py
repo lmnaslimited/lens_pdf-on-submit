@@ -160,7 +160,13 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	"""
 
 def fn_get_search_match_order_clause(i_txt):
-	"""Generate SQL CASE condition for Item search relevance."""
+	"""
+	Issue id: ISS-2026-00074 - Wrong Item Filtering
+	Prioritize direct Item Code and Item Name matches over Description matches.
+
+	For example, when searching for "Service", the main Service Item should
+	appear before variants whose Description contains "Service".
+	"""
 
 	if not i_txt or not i_txt.strip("%"):
 		return ""
@@ -284,6 +290,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 	# to prioritize preferred Item template variants in search results
 	la_item_search_priority = fn_get_item_search_configuration()
 
+	# Give lower priority to Items matched only through their Description.
 	l_order_match_priority = fn_get_search_match_order_clause(txt)
 
 	l_order_priority = fn_get_priority_order_clause(
