@@ -159,6 +159,27 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 		end,
 	"""
 
+def fn_get_search_match_order_clause(i_txt):
+	"""
+	Issue id: ISS-2026-00074 - Wrong Item Filtering
+	Prioritize direct Item Code and Item Name matches over Description matches.
+
+	For example, when searching for "Service", the main Service Item should
+	appear before variants whose Description contains "Service".
+	"""
+
+	if not i_txt or not i_txt.strip("%"):
+		return ""
+
+	return f"""
+		case
+			when tabItem.item_code like %(txt)s then 1
+			when tabItem.item_name like %(txt)s then 2
+			when tabItem.description like %(txt)s then 3
+			else 999
+		end,
+	"""
+
 '''
 Custom Item search query used to prioritize Item search results
 based on the Item Search Sort Order configuration maintained in
@@ -269,6 +290,9 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 	# to prioritize preferred Item template variants in search results
 	la_item_search_priority = fn_get_item_search_configuration()
 
+	# Give lower priority to Items matched only through their Description.
+	l_order_match_priority = fn_get_search_match_order_clause(txt) #ISS-2026-00074
+
 	l_order_priority = fn_get_priority_order_clause(
 		la_item_search_priority,
 		txt
@@ -285,6 +309,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 				{l_description_cond})
 			{fcond} {mcond}
 		order by
+			{l_order_match_priority}
 			{l_order_priority}
 			if(locate(%(_txt)s, name), locate(%(_txt)s, name), 99999),
 			if(locate(%(_txt)s, item_name), locate(%(_txt)s, item_name), 99999),
@@ -297,6 +322,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 			mcond=get_match_cond(l_doctype).replace("%", "%%"),
 			l_description_cond=l_description_cond,
 			l_order_priority=l_order_priority,
+			l_order_match_priority=l_order_match_priority
 		),
 		{
 			"today": nowdate(),
