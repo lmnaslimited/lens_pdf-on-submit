@@ -182,8 +182,8 @@ def fn_get_search_match_order_clause(i_txt):
 
 	return f"""
 		case
-			when tabItem.item_code like %(txt)s then 1
-			when tabItem.item_name like %(txt)s then 2
+			when tabItem.item_name like %(txt)s then 1
+			when tabItem.item_code like %(txt)s then 2
 			when tabItem.description like %(txt)s then 3
 			else 999
 		end,
