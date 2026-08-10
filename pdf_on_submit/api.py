@@ -6,7 +6,7 @@ from frappe import _
 
 from frappe import scrub
 from frappe.desk.reportview import get_filters_cond, get_match_cond
-from frappe.utils import nowdate
+from frappe.utils import cint, nowdate
 
 
 @frappe.whitelist()
@@ -109,7 +109,7 @@ def fn_get_item_search_configuration():
 		return frappe.get_all(
 			l_child_doctype,
 			filters={"parent": "Quotation Presets"},
-			fields=["item_template", "idx"],
+			fields=["item_template","is_catalog_item", "idx"],
 			order_by="idx asc",
 		)
 
@@ -120,31 +120,40 @@ def fn_get_item_search_configuration():
 def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	"""Generate SQL CASE condition for Item priority ordering."""
 
-	# Apply Item template prioritization only during actual user search
+	# Apply Item template and is_catalog_item prioritization only during actual user search
 	# to avoid reordering default Item dropdown results
 	if not (ia_item_search_priority and i_txt.strip("%")):
 		return ""
 
 	la_case_conditions = []
-	la_processed_templates = set()
+	la_processed_rules = set()
 
 	# Build dynamic CASE conditions using configured Item priority sequence
 	for ld_row in ia_item_search_priority:
-		# Avoid empty rows
+		# Skip empty Item Template
 		if not ld_row.item_template:
 			continue
-		# Skip duplicate item templates
-		if ld_row.item_template in la_processed_templates:
+
+		# Treat (Item Template, Is Catalog) as a unique rule
+		l_rule = (ld_row.item_template, cint(ld_row.is_catalog_item))
+		if l_rule in la_processed_rules:
 			continue
 
-		la_processed_templates.add(ld_row.item_template)
-
-		# Escape Item template values before injecting into SQL CASE condition
+		la_processed_rules.add(l_rule)
+		# Escape Item template values and is_catalog_item values before injecting into SQL CASE condition
 		# to safely handle special characters and avoid SQL syntax errors
 		# ex: ABC's Cable --> 'ABC\'s Cable'
+		l_condition = (
+			f"ifnull(tabItem.variant_of, '') = {frappe.db.escape(ld_row.item_template)}"
+		)
+
+		# Match Catalog Items only when configured
+		if ld_row.is_catalog_item:
+			l_condition += " and ifnull(tabItem.is_catalog_item, 0) = 1"
+
 		la_case_conditions.append(
 			f"""
-				when ifnull(tabItem.variant_of, '') = {frappe.db.escape(ld_row.item_template)}
+				when {l_condition}
 				then {ld_row.idx}
 			"""
 		)
@@ -173,8 +182,8 @@ def fn_get_search_match_order_clause(i_txt):
 
 	return f"""
 		case
-			when tabItem.item_code like %(txt)s then 1
-			when tabItem.item_name like %(txt)s then 2
+			when tabItem.item_name like %(txt)s then 1
+			when tabItem.item_code like %(txt)s then 2
 			when tabItem.description like %(txt)s then 3
 			else 999
 		end,
