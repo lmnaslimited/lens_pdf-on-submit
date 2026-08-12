@@ -143,10 +143,16 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 		# Escape Item template values and is_catalog_item values before injecting into SQL CASE condition
 		# to safely handle special characters and avoid SQL syntax errors
 		# ex: ABC's Cable --> 'ABC\'s Cable'
-		l_condition = (
-			f"ifnull(tabItem.variant_of, '') = {frappe.db.escape(ld_row.item_template)}"
-		)
-
+		l_condition = f"""
+			(
+				(
+					tabItem.item_code LIKE %(txt)s
+					OR tabItem.item_name LIKE %(txt)s
+				)
+				AND ifnull(tabItem.variant_of, '') =
+					{frappe.db.escape(ld_row.item_template)}
+			)
+		"""
 		# Match Catalog Items only when configured
 		if ld_row.is_catalog_item:
 			l_condition += " and ifnull(tabItem.is_catalog_item, 0) = 1"
@@ -300,7 +306,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 	la_item_search_priority = fn_get_item_search_configuration()
 
 	# Give lower priority to Items matched only through their Description.
-	l_order_match_priority = fn_get_search_match_order_clause(txt) #ISS-2026-00074
+	# l_order_match_priority = fn_get_search_match_order_clause(txt) #ISS-2026-00074
 
 	l_order_priority = fn_get_priority_order_clause(
 		la_item_search_priority,
@@ -318,7 +324,6 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 				{l_description_cond})
 			{fcond} {mcond}
 		order by
-			{l_order_match_priority}
 			{l_order_priority}
 			if(locate(%(_txt)s, name), locate(%(_txt)s, name), 99999),
 			if(locate(%(_txt)s, item_name), locate(%(_txt)s, item_name), 99999),
@@ -331,7 +336,6 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 			mcond=get_match_cond(l_doctype).replace("%", "%%"),
 			l_description_cond=l_description_cond,
 			l_order_priority=l_order_priority,
-			l_order_match_priority=l_order_match_priority
 		),
 		{
 			"today": nowdate(),
