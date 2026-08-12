@@ -146,8 +146,7 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 		l_condition = f"""
 			(
 				(
-					tabItem.item_code LIKE %(txt)s
-					OR tabItem.item_name LIKE %(txt)s
+					tabItem.item_name LIKE %(txt)s
 				)
 				AND ifnull(tabItem.variant_of, '') =
 					{frappe.db.escape(ld_row.item_template)}
