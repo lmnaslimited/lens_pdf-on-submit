@@ -118,49 +118,65 @@ def fn_get_item_search_configuration():
 		return []
 	
 def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
-	"""Generate SQL CASE condition for Item priority ordering."""
+	"""
+	Generate SQL CASE condition for Item priority ordering.
 
-	# Apply Item template and is_catalog_item prioritization only during actual user search
-	# to avoid reordering default Item dropdown results
+	Two-tier priority:
+	  Tier 1 (best):     variant_of matches the configured template AND
+	                      (if configured) is_catalog_item is also set.
+	  Tier 2 (fallback): variant_of matches the configured template,
+	                      but the catalog-item flag requirement isn't met.
+	                      Still ranked ahead of items whose template
+	                      isn't configured at all.
+	"""
+
 	if not (ia_item_search_priority and i_txt.strip("%")):
 		return ""
+
+	# Gap large enough that every Tier 1 match (across ALL configured
+	# templates) outranks every Tier 2 match. Bump this up only if you
+	# ever configure 500+ priority rows.
+	TIER2_OFFSET = 500
 
 	la_case_conditions = []
 	la_processed_rules = set()
 
-	# Build dynamic CASE conditions using configured Item priority sequence
 	for ld_row in ia_item_search_priority:
-		# Skip empty Item Template
 		if not ld_row.item_template:
 			continue
 
-		# Treat (Item Template, Is Catalog) as a unique rule
 		l_rule = (ld_row.item_template, cint(ld_row.is_catalog_item))
 		if l_rule in la_processed_rules:
 			continue
-
 		la_processed_rules.add(l_rule)
-		# Escape Item template values and is_catalog_item values before injecting into SQL CASE condition
-		# to safely handle special characters and avoid SQL syntax errors
-		# ex: ABC's Cable --> 'ABC\'s Cable'
-		l_condition = (
-            f"ifnull(tabItem.variant_of, '') = "
-            f"{frappe.db.escape(ld_row.item_template)}"
-        )
-		if ld_row.is_catalog_item:
-			l_condition += (
-                " and ifnull(tabItem.is_catalog_item, 0) = 1"
-            )
 
-        # Apply configured template priority ONLY when
-        # the Item Name also matches the search text.
-		l_condition += " and tabItem.item_name like %(txt)s"
-		la_case_conditions.append(
-            f"""
-                when {l_condition}
-                then {ld_row.idx}
-            """
-        )
+		l_template_cond = (
+			f"ifnull(tabItem.variant_of, '') = "
+			f"{frappe.db.escape(ld_row.item_template)}"
+		)
+
+		if ld_row.is_catalog_item:
+			# Tier 1: template + catalog flag both match
+			la_case_conditions.append(f"""
+				when {l_template_cond}
+					and ifnull(tabItem.is_catalog_item, 0) = 1
+					and tabItem.item_name like %(txt)s
+				then {ld_row.idx}
+			""")
+			# Tier 2: right template, catalog flag not set on this item —
+			# still better than an unconfigured template.
+			la_case_conditions.append(f"""
+				when {l_template_cond}
+					and tabItem.item_name like %(txt)s
+				then {TIER2_OFFSET + ld_row.idx}
+			""")
+		else:
+			# No catalog requirement configured — template match alone is Tier 1.
+			la_case_conditions.append(f"""
+				when {l_template_cond}
+					and tabItem.item_name like %(txt)s
+				then {ld_row.idx}
+			""")
 
 	if not la_case_conditions:
 		return ""
@@ -171,7 +187,7 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 			else 999
 		end,
 	"""
-
+	
 def fn_get_search_match_order_clause(i_txt):
 	"""
 	Issue id: ISS-2026-00074 - Wrong Item Filtering
