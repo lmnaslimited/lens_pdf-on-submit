@@ -133,9 +133,7 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	if not (ia_item_search_priority and i_txt.strip("%")):
 		return ""
 
-	# Guarantees every Condition 1 match outranks every Condition 2 match,
-	# regardless of how many priority rows are configured — offset always
-	# exceeds the highest possible idx in this list.
+	#Push Condition 2 scores above all Condition 1 scores, so Condition 1 always wins.
 	CONDITION2_OFFSET = len(ia_item_search_priority) + 1
 
 	la_case_conditions = []
@@ -156,22 +154,22 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 		)
 
 		if ld_row.is_catalog_item:
-			# Condition 1 checks template + catalog flag both match
+			# Condition 1: template matches AND item is flagged as catalog item.
 			la_case_conditions.append(f"""
 				when {l_template_cond}
 					and ifnull(tabItem.is_catalog_item, 0) = 1
 					and tabItem.item_name like %(txt)s
 				then {ld_row.idx}
 			""")
-			# Condition 2 checks right template, catalog flag not set on this item —
-			# still better than an unconfigured template .
+			# Condition 2: template matches, but catalog flag is missing.
+			# Still ranked better than an unconfigured/unrelated template.
 			la_case_conditions.append(f"""
 				when {l_template_cond}
 					and tabItem.item_name like %(txt)s
 				then {CONDITION2_OFFSET + ld_row.idx}
 			""")
 		else:
-			# No catalog requirement configured — template match alone is Tier 1.
+			# No catalog flag required — template match alone is good enough (Condition 1).
 			la_case_conditions.append(f"""
 				when {l_template_cond}
 					and tabItem.item_name like %(txt)s
@@ -315,7 +313,6 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 				{l_description_cond})
 			{fcond} {mcond}
 		order by
-			if(tabItem.item_name like %(txt)s, 1, 2),
     		{l_order_priority}
 			if(locate(%(_txt)s, name), locate(%(_txt)s, name), 99999),
 			if(locate(%(_txt)s, item_name), locate(%(_txt)s, item_name), 99999),
