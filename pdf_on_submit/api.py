@@ -121,22 +121,22 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	"""
 	Generate SQL CASE condition for Item priority ordering.
 
-	Two-tier priority:
-	  Tier 1 (best):     variant_of matches the configured template AND
-	                      (if configured) is_catalog_item is also set.
-	  Tier 2 (fallback): variant_of matches the configured template,
-	                      but the catalog-item flag requirement isn't met.
-	                      Still ranked ahead of items whose template
-	                      isn't configured at all.
+	Two-condition priority:
+	  Condition 1 (best):     variant_of matches the configured template AND
+	                          (if configured) is_catalog_item is also set.
+	  Condition 2 (fallback): variant_of matches the configured template,
+	                          but the catalog-item flag requirement isn't met.
+	                          Still ranked ahead of items whose template
+	                          isn't configured at all.
 	"""
 
 	if not (ia_item_search_priority and i_txt.strip("%")):
 		return ""
 
-	# Gap large enough that every Tier 1 match (across ALL configured
-	# templates) outranks every Tier 2 match. Bump this up only if you
-	# ever configure 500+ priority rows.
-	TIER2_OFFSET = 500
+	# Guarantees every Condition 1 match outranks every Condition 2 match,
+	# regardless of how many priority rows are configured — offset always
+	# exceeds the highest possible idx in this list.
+	CONDITION2_OFFSET = len(ia_item_search_priority) + 1
 
 	la_case_conditions = []
 	la_processed_rules = set()
@@ -156,19 +156,19 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 		)
 
 		if ld_row.is_catalog_item:
-			# Tier 1: template + catalog flag both match
+			# Condition 1 checks template + catalog flag both match
 			la_case_conditions.append(f"""
 				when {l_template_cond}
 					and ifnull(tabItem.is_catalog_item, 0) = 1
 					and tabItem.item_name like %(txt)s
 				then {ld_row.idx}
 			""")
-			# Tier 2: right template, catalog flag not set on this item —
-			# still better than an unconfigured template.
+			# Condition 2 checks right template, catalog flag not set on this item —
+			# still better than an unconfigured template .
 			la_case_conditions.append(f"""
 				when {l_template_cond}
 					and tabItem.item_name like %(txt)s
-				then {TIER2_OFFSET + ld_row.idx}
+				then {CONDITION2_OFFSET + ld_row.idx}
 			""")
 		else:
 			# No catalog requirement configured — template match alone is Tier 1.
@@ -188,26 +188,6 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 		end,
 	"""
 	
-def fn_get_search_match_order_clause(i_txt):
-	"""
-	Issue id: ISS-2026-00074 - Wrong Item Filtering
-	Prioritize direct Item Code and Item Name matches over Description matches.
-
-	For example, when searching for "Service", the main Service Item should
-	appear before variants whose Description contains "Service".
-	"""
-
-	if not i_txt or not i_txt.strip("%"):
-		return ""
-
-	return f"""
-		case
-			when tabItem.item_name like %(txt)s then 1
-			when tabItem.item_code like %(txt)s then 2
-			when tabItem.description like %(txt)s then 3
-			else 999
-		end,
-	"""
 
 '''
 Custom Item search query used to prioritize Item search results
@@ -318,9 +298,6 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 	# Fetch Item search Sort Order configuration from Quotation Presets
 	# to prioritize preferred Item template variants in search results
 	la_item_search_priority = fn_get_item_search_configuration()
-
-	# Give lower priority to Items matched only through their Description.
-	# l_order_match_priority = fn_get_search_match_order_clause(txt) #ISS-2026-00074
 
 	l_order_priority = fn_get_priority_order_clause(
 		la_item_search_priority,
