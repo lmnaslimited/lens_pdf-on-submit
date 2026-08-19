@@ -133,7 +133,9 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	if not (ia_item_search_priority and i_txt.strip("%")):
 		return ""
 
-	#Push Condition 2 scores above all Condition 1 scores, so Condition 1 always wins.
+	# Add an offset for fallback matches so they always rank below
+	# the preferred catalog-item matches, while still ranking above
+	# items whose template does not match any configured priority.
 	CONDITION2_OFFSET = len(ia_item_search_priority) + 1
 
 	la_case_conditions = []
@@ -154,22 +156,26 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 		)
 
 		if ld_row.is_catalog_item:
-			# Condition 1: template matches AND item is flagged as catalog item.
+			# Condition 1 (preferred):
+			# Template matches + item is a catalog item.
+			# Uses the original priority index, so these results are ranked first.
 			la_case_conditions.append(f"""
 				when {l_template_cond}
 					and ifnull(tabItem.is_catalog_item, 0) = 1
 					and tabItem.item_name like %(txt)s
 				then {ld_row.idx}
 			""")
-			# Condition 2: template matches, but catalog flag is missing.
-			# Still ranked better than an unconfigured/unrelated template.
+			# Condition 2 (fallback):
+			# Template matches, but the item is not required to be a catalog item.
+			# The offset lowers its priority, but keeps it above unrelated templates.
 			la_case_conditions.append(f"""
 				when {l_template_cond}
 					and tabItem.item_name like %(txt)s
 				then {CONDITION2_OFFSET + ld_row.idx}
 			""")
 		else:
-			# No catalog flag required — template match alone is good enough (Condition 1).
+			# Catalog match is not required for this rule.
+			# A template match therefore receives the configured priority directly.
 			la_case_conditions.append(f"""
 				when {l_template_cond}
 					and tabItem.item_name like %(txt)s
