@@ -145,13 +145,13 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 		# Skip empty Item Template
 		if not ld_row.item_template:
 			continue
-		
+
 		# Treat (Item Template, Is Catalog) as a unique rule
 		l_rule = (ld_row.item_template, cint(ld_row.is_catalog_item))
 
 		if l_rule in la_processed_rules:
 			continue
-		
+
 		la_processed_rules.add(l_rule)
 
 		# Escape Item template values and is_catalog_item values before injecting into SQL CASE condition
