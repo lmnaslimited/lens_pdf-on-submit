@@ -119,86 +119,65 @@ def fn_get_item_search_configuration():
 	
 def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	"""
-	Generate SQL CASE condition for Item priority ordering.
+	Generate SQL ORDER BY expressions for Item priority ordering.
 
-	Two-condition priority:
-	  Condition 1 (best):     variant_of matches the configured template AND
-	                          (if configured) is_catalog_item is also set.
-	  Condition 2 (fallback): variant_of matches the configured template,
-	                          but the catalog-item flag requirement isn't met.
-	                          Still ranked ahead of items whose template
-	                          isn't configured at all.
+	Template order comes FIRST — it always wins, no exceptions.
+	Catalog-item match is used ONLY to break ties within the same template.
+
+	Example with DTTHCZ2N (idx=1) and DTTHZ2N (idx=2), both catalog-required:
+	  1. DTTHCZ2N + catalog match
+	  2. DTTHCZ2N + catalog mismatch
+	  3. DTTHZ2N  + catalog match
+	  4. DTTHZ2N  + catalog mismatch
+	  5. anything not matching a configured template
 	"""
 
+	# Nothing configured, or nothing typed — skip entirely.
 	if not (ia_item_search_priority and i_txt.strip("%")):
-		return ""
+		return "", ""
 
-	# Add an offset for fallback matches so they always rank below
-	# the preferred catalog-item matches, while still ranking above
-	# items whose template does not match any configured priority.
-	CONDITION2_OFFSET = len(ia_item_search_priority) + 1
-
-	la_case_conditions = []
+	# Column 1: which template matched — this alone decides the main order.
+	la_template_when = []
+	# Column 2: does it satisfy the catalog requirement — only used as a tiebreaker.
+	la_catalog_when = []
 	la_processed_rules = set()
 
 	for ld_row in ia_item_search_priority:
-		# Skip empty Item Template
 		if not ld_row.item_template:
 			continue
 
-		# Treat (Item Template, Is Catalog) as a unique rule
 		l_rule = (ld_row.item_template, cint(ld_row.is_catalog_item))
-
 		if l_rule in la_processed_rules:
 			continue
-
 		la_processed_rules.add(l_rule)
 
-		# Escape Item template values and is_catalog_item values before injecting into SQL CASE condition
-		# to safely handle special characters and avoid SQL syntax errors
-		# ex: ABC's Cable --> 'ABC\'s Cable'
-		l_template_cond = (
+		l_template_match = (
 			f"ifnull(tabItem.variant_of, '') = "
 			f"{frappe.db.escape(ld_row.item_template)}"
+			f" and tabItem.item_name like %(txt)s"
 		)
 
+		# Template rank never depends on catalog status.
+		la_template_when.append(f"when {l_template_match} then {ld_row.idx}")
+
 		if ld_row.is_catalog_item:
-			# Condition 1 (preferred):
-			# Template matches + item is a catalog item.
-			# Uses the original priority index, so these results are ranked first.
-			la_case_conditions.append(f"""
-				when {l_template_cond}
-					and ifnull(tabItem.is_catalog_item, 0) = 1
-					and tabItem.item_name like %(txt)s
-				then {ld_row.idx}
-			""")
-			# Condition 2 (fallback):
-			# Template matches, but the item is not required to be a catalog item.
-			# The offset lowers its priority, but keeps it above unrelated templates.
-			la_case_conditions.append(f"""
-				when {l_template_cond}
-					and tabItem.item_name like %(txt)s
-				then {CONDITION2_OFFSET + ld_row.idx}
-			""")
+			# Catalog required: catalog-matched items of this template rank 0 (best),
+			# catalog-missing items of this SAME template rank 1 (worse, but still
+			# tied to this template's slot — never jumps to another template).
+			la_catalog_when.append(f"when {l_template_match} and ifnull(tabItem.is_catalog_item, 0) = 1 then 0")
+			la_catalog_when.append(f"when {l_template_match} then 1")
 		else:
-			# Catalog match is not required for this rule.
-			# A template match therefore receives the configured priority directly.
-			la_case_conditions.append(f"""
-				when {l_template_cond}
-					and tabItem.item_name like %(txt)s
-				then {ld_row.idx}
-			""")
+			# Catalog not required for this template — catalog / non-catalog items
+			# can appear in any order within this template's slot.
+			la_catalog_when.append(f"when {l_template_match} then 0")
 
-	if not la_case_conditions:
-		return ""
+	if not la_template_when:
+		return "", ""
 
-	return f"""
-		case
-			{' '.join(la_case_conditions)}
-			else 999
-		end,
-	"""
-	
+	l_template_clause = f"case {' '.join(la_template_when)} else 999 end,"
+	l_catalog_clause = f"case {' '.join(la_catalog_when)} else 0 end,"
+
+	return l_template_clause, l_catalog_clause
 
 '''
 Custom Item search query used to prioritize Item search results
@@ -310,7 +289,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 	# to prioritize preferred Item template variants in search results
 	la_item_search_priority = fn_get_item_search_configuration()
 
-	l_order_priority = fn_get_priority_order_clause(
+	l_order_template, l_order_catalog = fn_get_priority_order_clause(
 		la_item_search_priority,
 		txt
 	)
@@ -326,7 +305,8 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 				{l_description_cond})
 			{fcond} {mcond}
 		order by
-    		{l_order_priority}
+			{l_order_template}
+			{l_order_catalog}
 			if(locate(%(_txt)s, name), locate(%(_txt)s, name), 99999),
 			if(locate(%(_txt)s, item_name), locate(%(_txt)s, item_name), 99999),
 			idx desc,
@@ -337,7 +317,8 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 			fcond=get_filters_cond(l_doctype, filters, la_conditions).replace("%", "%%"),
 			mcond=get_match_cond(l_doctype).replace("%", "%%"),
 			l_description_cond=l_description_cond,
-			l_order_priority=l_order_priority,
+			l_order_template=l_order_template,
+			l_order_catalog=l_order_catalog,
 		),
 		{
 			"today": nowdate(),
