@@ -116,7 +116,7 @@ def fn_get_item_search_configuration():
 	# Ignore error if Quotation Presets doctype does not exist
 	except frappe.DoesNotExistError:
 		return []
-	
+# Generate SQL ORDER BY expressions for Item priority ordering based on configured templates and catalog requirements.	
 def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	"""
 	Generate SQL ORDER BY expressions for Item priority ordering.
@@ -124,7 +124,7 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	Template order comes FIRST — it always wins, no exceptions.
 	Catalog-item match is used ONLY to break ties within the same template.
 
-	Example with DTTHCZ2N (idx=1) and DTTHZ2N (idx=2), both catalog-required:
+	Example: DTTHCZ2N (idx=1) and DTTHZ2N (idx=2), both catalog-required:
 	  1. DTTHCZ2N + catalog match
 	  2. DTTHCZ2N + catalog mismatch
 	  3. DTTHZ2N  + catalog match
@@ -142,28 +142,29 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	la_catalog_when = []
 	la_processed_rules = set()
 
+	# Iterate through configured Item template priority rules and generate SQL CASE expressions
 	for ld_row in ia_item_search_priority:
+		# Skip rows where no template was set.
 		if not ld_row.item_template:
 			continue
-
+		# Skip if this exact (template, catalog-required) combo was already processed.
 		l_rule = (ld_row.item_template, cint(ld_row.is_catalog_item))
 		if l_rule in la_processed_rules:
 			continue
 		la_processed_rules.add(l_rule)
-
+		# Base condition: is this item a variant of the configured template,
+		# and does its name match the search text?
 		l_template_match = (
 			f"ifnull(tabItem.variant_of, '') = "
 			f"{frappe.db.escape(ld_row.item_template)}"
 			f" and tabItem.item_name like %(txt)s"
 		)
-
 		# Template rank never depends on catalog status.
 		la_template_when.append(f"when {l_template_match} then {ld_row.idx}")
 
 		if ld_row.is_catalog_item:
-			# Catalog required: catalog-matched items of this template rank 0 (best),
-			# catalog-missing items of this SAME template rank 1 (worse, but still
-			# tied to this template's slot — never jumps to another template).
+			# Catalog match required for this template:
+			# rank 0 = template matched AND catalog flag set (best within this template).
 			la_catalog_when.append(f"when {l_template_match} and ifnull(tabItem.is_catalog_item, 0) = 1 then 0")
 			la_catalog_when.append(f"when {l_template_match} then 1")
 		else:
@@ -171,12 +172,15 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 			# can appear in any order within this template's slot.
 			la_catalog_when.append(f"when {l_template_match} then 0")
 
+	# If nothing was actually configured/matched, skip ordering entirely.
 	if not la_template_when:
 		return "", ""
-
+	# Generate SQL CASE expressions for template and catalog ordering
 	l_template_clause = f"case {' '.join(la_template_when)} else 999 end,"
 	l_catalog_clause = f"case {' '.join(la_catalog_when)} else 0 end,"
 
+	# The caller must place l_template_clause BEFORE l_catalog_clause in ORDER BY
+	# for template-first, catalog-as-tiebreaker behavior to work.
 	return l_template_clause, l_catalog_clause
 
 '''
