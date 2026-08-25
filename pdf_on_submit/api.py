@@ -116,78 +116,72 @@ def fn_get_item_search_configuration():
 	# Ignore error if Quotation Presets doctype does not exist
 	except frappe.DoesNotExistError:
 		return []
-	
+# Generate SQL ORDER BY expressions for Item priority ordering based on configured templates and catalog requirements.	
 def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
-	"""Generate SQL CASE condition for Item priority ordering."""
+	"""
+	Generate SQL ORDER BY expressions for Item priority ordering.
 
-	# Apply Item template and is_catalog_item prioritization only during actual user search
-	# to avoid reordering default Item dropdown results
+	Template order comes FIRST — it always wins, no exceptions.
+	Catalog-item match is used ONLY to break ties within the same template.
+
+	Example: DTTHCZ2N (idx=1) and DTTHZ2N (idx=2), both catalog-required:
+	  1. DTTHCZ2N + catalog match
+	  2. DTTHCZ2N + catalog mismatch
+	  3. DTTHZ2N  + catalog match
+	  4. DTTHZ2N  + catalog mismatch
+	  5. anything not matching a configured template
+	"""
+
+	# Nothing configured, or nothing typed — skip entirely.
 	if not (ia_item_search_priority and i_txt.strip("%")):
-		return ""
+		return "", ""
 
-	la_case_conditions = []
+	# Column 1: which template matched — this alone decides the main order.
+	la_template_when = []
+	# Column 2: does it satisfy the catalog requirement — only used as a tiebreaker.
+	la_catalog_when = []
 	la_processed_rules = set()
 
-	# Build dynamic CASE conditions using configured Item priority sequence
+	# Iterate through configured Item template priority rules and generate SQL CASE expressions
 	for ld_row in ia_item_search_priority:
-		# Skip empty Item Template
+		# Skip rows where no template was set.
 		if not ld_row.item_template:
 			continue
-
-		# Treat (Item Template, Is Catalog) as a unique rule
+		# Skip if this exact (template, catalog-required) combo was already processed.
 		l_rule = (ld_row.item_template, cint(ld_row.is_catalog_item))
 		if l_rule in la_processed_rules:
 			continue
-
 		la_processed_rules.add(l_rule)
-		# Escape Item template values and is_catalog_item values before injecting into SQL CASE condition
-		# to safely handle special characters and avoid SQL syntax errors
-		# ex: ABC's Cable --> 'ABC\'s Cable'
-		l_condition = (
-			f"ifnull(tabItem.variant_of, '') = {frappe.db.escape(ld_row.item_template)}"
+		# Base condition: is this item a variant of the configured template,
+		# and does its name match the search text?
+		l_template_match = (
+			f"ifnull(tabItem.variant_of, '') = "
+			f"{frappe.db.escape(ld_row.item_template)}"
+			f" and tabItem.item_name like %(txt)s"
 		)
+		# Template rank never depends on catalog status.
+		la_template_when.append(f"when {l_template_match} then {ld_row.idx}")
 
-		# Match Catalog Items only when configured
 		if ld_row.is_catalog_item:
-			l_condition += " and ifnull(tabItem.is_catalog_item, 0) = 1"
+			# Catalog match required for this template:
+			# rank 0 = template matched AND catalog flag set (best within this template).
+			la_catalog_when.append(f"when {l_template_match} and ifnull(tabItem.is_catalog_item, 0) = 1 then 0")
+			la_catalog_when.append(f"when {l_template_match} then 1")
+		else:
+			# Catalog not required for this template — catalog / non-catalog items
+			# can appear in any order within this template's slot.
+			la_catalog_when.append(f"when {l_template_match} then 0")
 
-		la_case_conditions.append(
-			f"""
-				when {l_condition}
-				then {ld_row.idx}
-			"""
-		)
+	# If nothing was actually configured/matched, skip ordering entirely.
+	if not la_template_when:
+		return "", ""
+	# Generate SQL CASE expressions for template and catalog ordering
+	l_template_clause = f"case {' '.join(la_template_when)} else 999 end,"
+	l_catalog_clause = f"case {' '.join(la_catalog_when)} else 0 end,"
 
-	if not la_case_conditions:
-		return ""
-
-	return f"""
-		case
-			{' '.join(la_case_conditions)}
-			else 999
-		end,
-	"""
-
-def fn_get_search_match_order_clause(i_txt):
-	"""
-	Issue id: ISS-2026-00074 - Wrong Item Filtering
-	Prioritize direct Item Code and Item Name matches over Description matches.
-
-	For example, when searching for "Service", the main Service Item should
-	appear before variants whose Description contains "Service".
-	"""
-
-	if not i_txt or not i_txt.strip("%"):
-		return ""
-
-	return f"""
-		case
-			when tabItem.item_name like %(txt)s then 1
-			when tabItem.item_code like %(txt)s then 2
-			when tabItem.description like %(txt)s then 3
-			else 999
-		end,
-	"""
+	# The caller must place l_template_clause BEFORE l_catalog_clause in ORDER BY
+	# for template-first, catalog-as-tiebreaker behavior to work.
+	return l_template_clause, l_catalog_clause
 
 '''
 Custom Item search query used to prioritize Item search results
@@ -299,10 +293,7 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 	# to prioritize preferred Item template variants in search results
 	la_item_search_priority = fn_get_item_search_configuration()
 
-	# Give lower priority to Items matched only through their Description.
-	l_order_match_priority = fn_get_search_match_order_clause(txt) #ISS-2026-00074
-
-	l_order_priority = fn_get_priority_order_clause(
+	l_order_template, l_order_catalog = fn_get_priority_order_clause(
 		la_item_search_priority,
 		txt
 	)
@@ -318,8 +309,8 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 				{l_description_cond})
 			{fcond} {mcond}
 		order by
-			{l_order_match_priority}
-			{l_order_priority}
+			{l_order_template}
+			{l_order_catalog}
 			if(locate(%(_txt)s, name), locate(%(_txt)s, name), 99999),
 			if(locate(%(_txt)s, item_name), locate(%(_txt)s, item_name), 99999),
 			idx desc,
@@ -330,8 +321,8 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 			fcond=get_filters_cond(l_doctype, filters, la_conditions).replace("%", "%%"),
 			mcond=get_match_cond(l_doctype).replace("%", "%%"),
 			l_description_cond=l_description_cond,
-			l_order_priority=l_order_priority,
-			l_order_match_priority=l_order_match_priority
+			l_order_template=l_order_template,
+			l_order_catalog=l_order_catalog,
 		),
 		{
 			"today": nowdate(),
