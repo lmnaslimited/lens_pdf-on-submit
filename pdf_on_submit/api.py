@@ -135,7 +135,7 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	# Nothing configured, or nothing typed — skip entirely.
 	if not (ia_item_search_priority and i_txt.strip("%")):
 		return "", ""
-
+	#<<ISS-2026-00074 & ISS-2026-00078
 	# Column 1: which template matched — this alone decides the main order.
 	la_template_when = []
 	# Column 2: does it satisfy the catalog requirement — only used as a tiebreaker.
@@ -182,6 +182,7 @@ def fn_get_priority_order_clause(ia_item_search_priority, i_txt):
 	# The caller must place l_template_clause BEFORE l_catalog_clause in ORDER BY
 	# for template-first, catalog-as-tiebreaker behavior to work.
 	return l_template_clause, l_catalog_clause
+  #>>ISS-2026-00074 & ISS-2026-00078
 
 '''
 Custom Item search query used to prioritize Item search results
@@ -202,6 +203,10 @@ preferred Item templates first in search results.
 
 If no preferred template is configured, the query follows the
 default ERPNext Item ordering behavior.
+
+ISS-2026-00078 - catalog items at the first place by creating offer in Lens
+ISS-2026-00074 - Wrong Item Filtering
+The above issues are combined one.
 '''
 @frappe.whitelist()
 @frappe.validate_and_sanitize_search_inputs
@@ -293,10 +298,13 @@ def custom_item_query(doctype, txt, searchfield, start, page_len, filters, as_di
 	# to prioritize preferred Item template variants in search results
 	la_item_search_priority = fn_get_item_search_configuration()
 
+	#<<ISS-2026-00074 & ISS-2026-00078
 	l_order_template, l_order_catalog = fn_get_priority_order_clause(
 		la_item_search_priority,
 		txt
 	)
+	#<<ISS-2026-00074 & ISS-2026-00078 
+	# Added l_order_template and l_order_catalog to ORDER BY clause to prioritize preferred Item templates first in search results
 	return frappe.db.sql(
 		"""select
 			tabItem.name {l_columns}
